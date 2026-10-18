@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.zip
+.env
+.env.*
+!.env.example
+!.env.railway.example
+data
+tests
+docs/ENGINEERING_REMEDIATION_PLAN.md
+.DS_Store

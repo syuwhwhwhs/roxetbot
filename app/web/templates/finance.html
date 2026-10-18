@@ -1,0 +1,469 @@
+{% extends "base.html" %}
+{% from "macros.html" import ord_status, pay_status, row_actions, page_title, table_select_head, table_select_cell, table_bulk_bar, modal_title %}
+{% block title %}
+{%- if finance_tab == 'reports' -%}گزارشات
+{%- elif finance_tab == 'behavior' -%}رفتار کاربر
+{%- elif finance_tab == 'payments' -%}پرداخت‌ها
+{%- elif finance_tab == 'delivery' -%}تحویل ناموفق
+{%- elif finance_tab == 'cancellations' -%}درخواست‌های لغو
+{%- else -%}مدیریت مالی
+{%- endif -%}
+{% endblock %}
+{% block content %}
+{% set finance_tab = finance_tab or 'reports' %}
+<div class="page-head">
+  <div>
+    {{ page_title('orders', 'مدیریت مالی', help='finance') }}
+    {% if finance_tab == 'reports' %}
+    <p class="muted page-sub">گزارش فروش و کاربران · امروز · ۷ روز · ۳۰ روز</p>
+    {% elif finance_tab == 'cancellations' %}
+    <p class="muted page-sub">بررسی درخواست لغو سرویس و اعتبار برگشتی کیف پول همین فروشگاه</p>
+    {% endif %}
+  </div>
+  {% if can_finance_settings %}
+  <button type="button" class="btn btn-ghost" data-modal-open="modal-finance-settings">تنظیمات</button>
+  {% endif %}
+</div>
+
+<nav class="section-tabs" role="tablist" aria-label="مدیریت مالی">
+  {% if can_orders or can_payments %}
+  <a class="{% if finance_tab=='reports' %}active{% endif %}" href="/finance?tab=reports">گزارشات</a>
+  <a class="{% if finance_tab=='behavior' %}active{% endif %}" href="/finance?tab=behavior">رفتار کاربر</a>
+  {% endif %}
+  {% if can_orders %}
+  <a class="{% if finance_tab=='orders' %}active{% endif %}" href="/finance?tab=orders">سفارشات</a>
+  {% endif %}
+  {% if can_payments %}
+  <a class="{% if finance_tab=='payments' %}active{% endif %}" href="/finance?tab=payments">پرداخت‌ها</a>
+  {% endif %}
+  {% if can_orders %}
+  <a class="{% if finance_tab=='delivery' %}active{% endif %}" href="/finance?tab=delivery">تحویل ناموفق</a>
+  <a class="finance-tab-cancel {% if finance_tab=='cancellations' %}active{% endif %}" href="/finance?tab=cancellations">
+    <span class="nav-item-label"><span>درخواست‌های لغو</span>{% if cancel_alert %}<i class="nav-dot" aria-label="درخواست لغو در انتظار"></i>{% endif %}</span>
+  </a>
+  {% endif %}
+</nav>
+
+{% if finance_tab == 'reports' and (can_orders or can_payments) %}
+{% include "_finance_reports.html" %}
+
+{% elif finance_tab == 'behavior' and (can_orders or can_payments) %}
+{% include "_funnel_panel.html" %}
+
+{% elif finance_tab == 'orders' and can_orders %}
+<div class="card card-flush">
+  <form method="get" action="/finance" class="search-bar">
+    <input type="hidden" name="tab" value="orders" />
+    <label class="search-bar-field">
+      <input name="q" value="{{ q or '' }}" placeholder="نام، تلگرام، پلن، وضعیت…" autocomplete="off" />
+    </label>
+    <button class="btn btn-ghost" type="submit">جستجو</button>
+  </form>
+  {{ table_bulk_bar('/finance/orders/bulk-action', [
+    {'key': 'approve', 'label': 'تأیید', 'class': 'btn-ok', 'confirm': '{n} سفارش تأیید شوند؟', 'confirm_title': 'تأیید گروهی', 'confirm_label': 'تأیید'},
+    {'key': 'reject', 'label': 'رد', 'class': 'btn-danger', 'confirm': '{n} سفارش رد شوند؟', 'confirm_title': 'رد گروهی', 'confirm_label': 'رد', 'danger': true},
+    {'key': 'cancel', 'label': 'لغو', 'confirm': '{n} سفارش لغو شوند؟', 'confirm_title': 'لغو گروهی', 'confirm_label': 'لغو', 'warn': true},
+  ]) }}
+  <div class="table-wrap">
+  <table class="table-compact" data-sortable data-bulk-select>
+    <thead>
+      <tr>
+        {{ table_select_head() }}
+        <th class="col-id" data-sort-type="num">#</th>
+        <th data-sort-type="text">کاربر</th>
+        <th class="col-hide-sm" data-sort-type="text">پلن</th>
+        <th data-sort-type="num">مبلغ</th>
+        <th data-sort-type="text">وضعیت</th>
+        <th class="col-hide-sm" data-sort-type="text">روش</th>
+        <th class="col-hide-sm" data-sort-type="text">زمان</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in orders %}
+      {% set pay = payments_by_order.get(o.id) %}
+      {% set uname = (o.user.full_name or o.user.username or o.user_id) if o.user else o.user_id %}
+      {% set pname = o.plan.name if o.plan else (o.plan_id or "—") %}
+      {% set ns = namespace(ops='') %}
+      {% if pay and pay.status == 'pending' %}
+        {% set ns.ops = 'approve,reject,cancel' %}
+      {% elif o.status == 'paid' %}
+        {% set ns.ops = 'approve' %}
+      {% elif o.status == 'awaiting_approval' %}
+        {% set ns.ops = 'approve,reject,cancel' %}
+      {% elif o.status in ['pending', 'awaiting_receipt'] %}
+        {% set ns.ops = 'approve,reject,cancel' %}
+      {% elif o.status == 'rejected' %}
+        {% set ns.ops = 'cancel' %}
+      {% endif %}
+      <tr data-bulk-ops="{{ ns.ops }}">
+        {{ table_select_cell(o.id) }}
+        <td class="mono" data-sort-value="{{ o.id }}">{{ o.id }}</td>
+        <td data-sort-value="{{ uname }}">
+          {% if o.user and o.user.id %}
+          <a class="cell-user-link" href="/users?uid={{ o.user.id }}">{{ uname }}</a>
+          {% if o.user.is_demo %}<span class="badge neutral" title="در گزارش‌های مالی محاسبه نمی‌شود">دمو</span>{% endif %}
+          {% else %}
+          {{ uname }}
+          {% endif %}
+        </td>
+        <td class="col-hide-sm" data-sort-value="{{ pname }}">{{ pname }}</td>
+        <td class="mono" data-sort-value="{{ o.amount }}" dir="ltr">{{ o.amount | money }}</td>
+        <td data-sort-value="{{ o.status }}">
+          <span class="badge {% if o.status=='delivered' %}delivered{% elif o.status=='paid' %}paid{% elif o.status in ['pending','awaiting_receipt','awaiting_approval'] %}pending{% elif o.status in ['rejected','cancelled','failed'] %}rejected{% else %}neutral{% endif %}">
+            {{ ord_status(o.status) }}
+          </span>
+          {% if o.id in (stuck_order_ids or []) %}
+          <span class="badge warn badge-inline" title="پرداخت شده بدون سرویس">گیرکرده</span>
+          {% endif %}
+        </td>
+        <td class="col-hide-sm" data-sort-value="{{ o.payment_method or '' }}">{% if o.payment_method=='card' %}کارت{% elif o.payment_method=='wallet' %}کیف پول{% else %}{{ o.payment_method or "—" }}{% endif %}</td>
+        <td class="muted col-hide-sm" data-sort-value="{{ o.created_at }}">{{ o.created_at }}</td>
+        <td class="col-actions">
+          {% set has_receipt = pay and pay.receipt_file_id and not (pay.receipt_file_id|string).startswith('stars:') %}
+          {% set can_act = (pay and pay.status == 'pending') or o.status in ['paid','awaiting_approval','pending','awaiting_receipt','rejected'] %}
+          {% if has_receipt or can_act %}
+          {% call row_actions() %}
+            {% if has_receipt %}
+            <button type="button" class="btn btn-ghost btn-sm" data-receipt-open="/payments/{{ pay.id }}/receipt">مشاهده رسید</button>
+            {% endif %}
+            {% if pay and pay.status == 'pending' %}
+              <form method="post" action="/orders/{{ o.id }}/approve" data-confirm="این سفارش تأیید و محصول ارسال شود؟" data-confirm-title="تأیید سفارش" data-confirm-label="تأیید">
+                <button class="btn btn-ok btn-sm" type="submit">تأیید</button>
+              </form>
+              <form method="post" action="/orders/{{ o.id }}/reject" data-confirm="این سفارش رد شود؟" data-confirm-title="رد سفارش" data-confirm-danger="1" data-confirm-label="رد">
+                <button class="btn btn-danger btn-sm" type="submit">رد</button>
+              </form>
+              <form method="post" action="/orders/{{ o.id }}/cancel" data-confirm="این سفارش لغو شود؟" data-confirm-title="لغو سفارش" data-confirm-warn="1" data-confirm-label="لغو">
+                <button class="btn btn-ghost btn-sm" type="submit">لغو</button>
+              </form>
+            {% elif o.status in ['paid','awaiting_approval','delivering'] %}
+              {% if o.id in (stuck_order_ids or []) %}
+              <form method="post" action="/orders/{{ o.id }}/retry-delivery"
+                    data-confirm="تحویل این سفارش گیرکرده ادامه یابد؟ (تأیید دوباره نیست)"
+                    data-confirm-title="ادامه تحویل"
+                    data-confirm-label="ادامه تحویل">
+                <button class="btn btn-ok btn-sm" type="submit">ادامه تحویل</button>
+              </form>
+              {% else %}
+              <form method="post" action="/orders/{{ o.id }}/approve" data-confirm="سفارش تأیید و تحویل شود؟" data-confirm-title="تأیید و تحویل" data-confirm-label="تأیید و تحویل">
+                <button class="btn btn-ok btn-sm" type="submit">تأیید و تحویل</button>
+              </form>
+              {% endif %}
+              {% if o.status == 'awaiting_approval' %}
+              <form method="post" action="/orders/{{ o.id }}/reject" data-confirm="این سفارش رد شود؟" data-confirm-title="رد سفارش" data-confirm-danger="1" data-confirm-label="رد">
+                <button class="btn btn-danger btn-sm" type="submit">رد</button>
+              </form>
+              <form method="post" action="/orders/{{ o.id }}/cancel" data-confirm="این سفارش لغو شود؟" data-confirm-title="لغو سفارش" data-confirm-warn="1" data-confirm-label="لغو">
+                <button class="btn btn-ghost btn-sm" type="submit">لغو</button>
+              </form>
+              {% endif %}
+            {% elif o.status in ['pending','awaiting_receipt'] %}
+              <form method="post" action="/orders/{{ o.id }}/approve" data-confirm="بدون رسید تأیید و سرویس برای کاربر ارسال شود؟" data-confirm-title="تأیید سفارش" data-confirm-label="تأیید">
+                <button class="btn btn-ok btn-sm" type="submit">تأیید</button>
+              </form>
+              <form method="post" action="/orders/{{ o.id }}/reject" data-confirm="این سفارش رد شود؟" data-confirm-title="رد سفارش" data-confirm-danger="1" data-confirm-label="رد">
+                <button class="btn btn-danger btn-sm" type="submit">رد</button>
+              </form>
+              <form method="post" action="/orders/{{ o.id }}/cancel" data-confirm="این سفارش لغو شود؟" data-confirm-title="لغو سفارش" data-confirm-warn="1" data-confirm-label="لغو">
+                <button class="btn btn-ghost btn-sm" type="submit">لغو</button>
+              </form>
+            {% elif o.status == 'rejected' %}
+              <form method="post" action="/orders/{{ o.id }}/cancel" data-confirm="این سفارش لغو شود؟" data-confirm-title="لغو سفارش" data-confirm-warn="1" data-confirm-label="لغو">
+                <button class="btn btn-ghost btn-sm" type="submit">لغو</button>
+              </form>
+            {% endif %}
+          {% endcall %}
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9" class="muted">سفارشی نیست</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if pager and (pager.has_prev or pager.has_next) %}
+  <nav class="list-pager" aria-label="صفحه‌بندی سفارش‌ها">
+    <p class="list-pager-meta">
+      {% if pager.pages and pager.total is not none %}
+      صفحه {{ pager.page }} از {{ pager.pages }}
+      <span aria-hidden="true">·</span>
+      {{ pager.total }} سفارش
+      {% else %}
+      صفحه {{ pager.page }}
+      {% endif %}
+    </p>
+    <div class="list-pager-actions">
+      {% if pager.has_prev %}
+      <a class="btn btn-ghost btn-sm" href="/finance?tab=orders&amp;page={{ pager.prev_page }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}">قبلی</a>
+      {% else %}
+      <span class="btn btn-ghost btn-sm" aria-disabled="true">قبلی</span>
+      {% endif %}
+      {% if pager.has_next %}
+      <a class="btn btn-ghost btn-sm" href="/finance?tab=orders&amp;page={{ pager.next_page }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}">بعدی</a>
+      {% else %}
+      <span class="btn btn-ghost btn-sm" aria-disabled="true">بعدی</span>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
+</div>
+
+{% elif finance_tab == 'payments' and can_payments %}
+<div class="card card-flush">
+  <form method="get" action="/finance" class="search-bar">
+    <input type="hidden" name="tab" value="payments" />
+    <label class="search-bar-field">
+      <input name="q" value="{{ q or '' }}" placeholder="نام، تلگرام، مبلغ، وضعیت…" autocomplete="off" />
+    </label>
+    <button class="btn btn-ghost" type="submit">جستجو</button>
+  </form>
+  {{ table_bulk_bar('/finance/payments/bulk-action', [
+    {'key': 'approve', 'label': 'تأیید', 'class': 'btn-ok', 'confirm': '{n} پرداخت تأیید شوند؟', 'confirm_title': 'تأیید گروهی', 'confirm_label': 'تأیید'},
+    {'key': 'reject', 'label': 'رد', 'class': 'btn-danger', 'confirm': '{n} پرداخت رد شوند؟', 'confirm_title': 'رد گروهی', 'confirm_label': 'رد', 'danger': true},
+  ]) }}
+  <div class="table-wrap">
+  <table class="table-compact" data-sortable data-bulk-select>
+    <thead><tr>
+      {{ table_select_head() }}
+      <th class="col-id" data-sort-type="num">#</th>
+      <th data-sort-type="text">کاربر</th>
+      <th data-sort-type="num">مبلغ</th>
+      <th class="col-hide-sm" data-sort-type="text">نوع</th>
+      <th data-sort-type="text">وضعیت</th>
+      <th class="col-hide-sm" data-sort-type="num">سفارش</th>
+      <th class="col-actions"></th>
+    </tr></thead>
+    <tbody>
+    {% for p in payments %}
+      {% set payer = (payers or {}).get(p.user_id) %}
+      {% set uname = (payer.full_name or payer.username or p.user_id) if payer else p.user_id %}
+      <tr data-bulk-ops="{% if p.status == 'pending' %}approve,reject{% endif %}">
+        {{ table_select_cell(p.id) }}
+        <td class="mono" data-sort-value="{{ p.id }}">{{ p.id }}</td>
+        <td data-sort-value="{{ uname }}">
+          {% if payer and payer.id %}
+          <a class="cell-user-link" href="/users?uid={{ payer.id }}">{{ uname }}</a>
+          {% if payer.is_demo %}<span class="badge neutral" title="در گزارش‌های مالی محاسبه نمی‌شود">دمو</span>{% endif %}
+          {% else %}
+          {{ uname }}
+          {% endif %}
+        </td>
+        <td class="mono" data-sort-value="{{ p.amount }}" dir="ltr">{{ p.amount | money }}</td>
+        <td class="col-hide-sm" data-sort-value="{{ 'wallet' if p.is_wallet_topup else 'buy' }}">{{ "شارژ کیف" if p.is_wallet_topup else "خرید" }}</td>
+        <td data-sort-value="{{ p.status }}">
+          <span class="badge {% if p.status=='pending' %}pending{% elif p.status=='approved' %}approved{% else %}rejected{% endif %}">
+            {{ pay_status(p.status) }}
+          </span>
+        </td>
+        <td class="col-hide-sm" data-sort-value="{{ p.order_id or 0 }}">{{ p.order_id or "—" }}</td>
+        <td class="col-actions">
+          {% if p.status == 'pending' or (p.receipt_file_id and not (p.receipt_file_id|string).startswith('stars:')) %}
+          {% call row_actions() %}
+            {% if p.receipt_file_id and not (p.receipt_file_id|string).startswith('stars:') %}
+            <button type="button" class="btn btn-ghost btn-sm" data-receipt-open="/payments/{{ p.id }}/receipt">مشاهده رسید</button>
+            {% endif %}
+            {% if p.status == 'pending' %}
+            <form method="post" action="/payments/{{ p.id }}/approve" data-confirm="این پرداخت تأیید شود؟ در صورت خرید، محصول هم ارسال می‌شود." data-confirm-title="تأیید پرداخت" data-confirm-label="تأیید"><button class="btn btn-ok btn-sm" type="submit">تأیید</button></form>
+            <form method="post" action="/payments/{{ p.id }}/reject" data-confirm="این پرداخت رد شود؟" data-confirm-title="رد پرداخت" data-confirm-danger="1" data-confirm-label="رد"><button class="btn btn-danger btn-sm" type="submit">رد</button></form>
+            {% endif %}
+          {% endcall %}
+          {% if p.status == 'pending' and (receipt_matches or {}).get(p.id) %}
+          <small class="muted" style="display:block;margin-top:var(--space-0)">هم‌مبلغ: {% for m in receipt_matches[p.id][:3] %}#{{ m.id }}{% if not loop.last %}، {% endif %}{% endfor %}</small>
+          {% endif %}
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">پرداختی نیست</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if pager and (pager.has_prev or pager.has_next) %}
+  <nav class="list-pager" aria-label="صفحه‌بندی پرداخت‌ها">
+    <p class="list-pager-meta">
+      {% if pager.pages and pager.total is not none %}
+      صفحه {{ pager.page }} از {{ pager.pages }}
+      <span aria-hidden="true">·</span>
+      {{ pager.total }} پرداخت
+      {% else %}
+      صفحه {{ pager.page }}
+      {% endif %}
+    </p>
+    <div class="list-pager-actions">
+      {% if pager.has_prev %}
+      <a class="btn btn-ghost btn-sm" href="/finance?tab=payments&amp;page={{ pager.prev_page }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}">قبلی</a>
+      {% else %}
+      <span class="btn btn-ghost btn-sm" aria-disabled="true">قبلی</span>
+      {% endif %}
+      {% if pager.has_next %}
+      <a class="btn btn-ghost btn-sm" href="/finance?tab=payments&amp;page={{ pager.next_page }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}">بعدی</a>
+      {% else %}
+      <span class="btn btn-ghost btn-sm" aria-disabled="true">بعدی</span>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
+</div>
+
+{% elif finance_tab == 'delivery' and can_orders %}
+<div class="card card-flush">
+  <p class="muted" style="padding:var(--space-2) var(--space-3) 0;margin:0">
+    اکشن هر ردیف مطابق تشخیص است: <strong>ادامه تحویل</strong> (سرویس ناقص) یا <strong>ارسال مجدد پیام</strong> (سرویس آماده، تلگرام ناموفق). تأیید دوباره انجام نمی‌شود.
+  </p>
+  {{ table_bulk_bar('/finance/delivery/bulk-action', [
+    {'key': 'retry', 'label': 'اجرای اکشن تشخیص', 'class': 'btn-ok', 'confirm': 'برای {n} سفارش، اکشن تشخیص‌شده (ادامه تحویل / ارسال مجدد) اجرا شود؟', 'confirm_title': 'اجرای گروهی', 'confirm_label': 'اجرا'},
+  ]) }}
+  <div class="table-wrap">
+  <table class="table-compact" data-sortable data-bulk-select>
+    <thead>
+      <tr>
+        {{ table_select_head() }}
+        <th data-sort-type="num">سفارش</th>
+        <th data-sort-type="text">کاربر</th>
+        <th data-sort-type="text">تشخیص</th>
+        <th class="col-hide-sm" data-sort-type="text">خطا</th>
+        <th data-sort-type="num">تلاش</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for oid in (stuck_only_order_ids or []) %}
+      {% set o = (orders_by_id or {}).get(oid) %}
+      {% set diag = (delivery_diag_by_order or {}).get(oid) %}
+      {% set act = diag.preferred_action if diag else 'resume' %}
+      {% set act_label = diag.action_label_fa if diag else 'ادامه تحویل' %}
+      {% set uname = (o.user.full_name or o.user.username or o.user_id) if o and o.user else (o.user_id if o else '—') %}
+      <tr data-bulk-ops="retry">
+        {{ table_select_cell(oid) }}
+        <td class="mono" data-sort-value="{{ oid }}">#{{ oid }} <span class="badge warn badge-inline">گیرکرده</span></td>
+        <td data-sort-value="{{ uname }}">{{ uname }}</td>
+        <td data-sort-value="{{ diag.kind if diag else 'stuck' }}">
+          <span class="badge warn badge-inline" title="{{ diag.detail_fa if diag else 'پرداخت‌شده بدون سرویس محلی' }}">{{ diag.label_fa if diag else 'تحویل ناقص' }}</span>
+          {% if diag and diag.payment_status %}
+          <small class="muted" style="display:block">پرداخت: {{ pay_status(diag.payment_status) }}{% if diag.order_status %} · سفارش: {{ ord_status(diag.order_status) }}{% endif %}</small>
+          {% endif %}
+        </td>
+        <td class="col-hide-sm muted" data-sort-value="stuck">پرداخت‌شده بدون سرویس محلی</td>
+        <td class="mono" data-sort-value="0">—</td>
+        <td class="col-actions">
+          {% call row_actions() %}
+            <form method="post" action="/orders/{{ oid }}/retry-delivery"
+                  data-confirm="{% if act == 'resend' %}فقط پیام تحویل دوباره ارسال شود؟ (سرویس دوباره ساخته نمی‌شود){% else %}تحویل این سفارش گیرکرده ادامه یابد؟{% endif %}"
+                  data-confirm-title="{{ act_label }}"
+                  data-confirm-label="{{ act_label }}">
+              <button class="btn btn-ok btn-sm" type="submit">{{ act_label }}</button>
+            </form>
+          {% endcall %}
+        </td>
+      </tr>
+    {% endfor %}
+    {% for f in delivery_failures %}
+      {% set o = (orders_by_id or {}).get(f.order_id) %}
+      {% set diag = (delivery_diag_by_order or {}).get(f.order_id) %}
+      {% set act = diag.preferred_action if diag else 'resume' %}
+      {% set act_label = diag.action_label_fa if diag else 'ادامه تحویل' %}
+      {% set uname = (o.user.full_name or o.user.username or o.user_id) if o and o.user else (o.user_id if o else '—') %}
+      <tr data-bulk-ops="retry">
+        {{ table_select_cell(f.order_id) }}
+        <td class="mono" data-sort-value="{{ f.order_id }}">#{{ f.order_id }}{% if f.order_id in (stuck_order_ids or []) %} <span class="badge warn badge-inline">گیرکرده</span>{% endif %}</td>
+        <td data-sort-value="{{ uname }}">{{ uname }}</td>
+        <td data-sort-value="{{ diag.kind if diag else 'fail' }}">
+          {% if diag and diag.kind == 'approved_resend' %}
+          <span class="badge pending badge-inline" title="{{ diag.detail_fa }}">{{ diag.label_fa }}</span>
+          {% elif diag and diag.kind == 'approved_fulfill' %}
+          <span class="badge warn badge-inline" title="{{ diag.detail_fa }}">{{ diag.label_fa }}</span>
+          {% elif diag %}
+          <span class="badge neutral badge-inline" title="{{ diag.detail_fa }}">{{ diag.label_fa }}</span>
+          {% else %}
+          <span class="badge warn badge-inline">تحویل ناموفق</span>
+          {% endif %}
+          {% if diag and diag.payment_status %}
+          <small class="muted" style="display:block">پرداخت: {{ pay_status(diag.payment_status) }}{% if diag.order_status %} · سفارش: {{ ord_status(diag.order_status) }}{% endif %}</small>
+          {% endif %}
+        </td>
+        <td class="col-hide-sm muted" data-sort-value="{{ f.error or '' }}">{{ (f.error or '—')[:120] }}</td>
+        <td class="mono" data-sort-value="{{ f.attempts }}">{{ f.attempts }}</td>
+        <td class="col-actions">
+          {% call row_actions() %}
+            <form method="post" action="/orders/{{ f.order_id }}/retry-delivery"
+                  data-confirm="{% if act == 'resend' %}فقط پیام تحویل دوباره ارسال شود؟ (سرویس دوباره ساخته نمی‌شود){% else %}تحویل این سفارش ادامه یابد؟{% endif %}"
+                  data-confirm-title="{{ act_label }}"
+                  data-confirm-label="{{ act_label }}">
+              <button class="btn btn-ok btn-sm" type="submit">{{ act_label }}</button>
+            </form>
+          {% endcall %}
+        </td>
+      </tr>
+    {% else %}
+      {% if not (stuck_only_order_ids or []) %}
+      <tr><td colspan="7" class="muted">صف تحویل ناموفق خالی است.</td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if finance_tab == 'cancellations' and can_orders %}
+{% include "_finance_cancellations.html" %}
+{% endif %}
+
+{% if can_finance_settings %}
+  {% include "_modal_finance_settings.html" %}
+{% endif %}
+
+<div class="ui-modal" id="modal-receipt" hidden>
+  <div class="ui-modal-backdrop" data-modal-close></div>
+  <div class="ui-modal-panel ui-modal-panel-receipt" role="dialog" aria-modal="true" aria-labelledby="receipt-modal-title">
+    <div class="ui-modal-head">
+      {{ modal_title('payments', 'رسید پرداخت', caption='بررسی و تأیید رسید', tone='brand', heading_id='receipt-modal-title') }}
+      <button type="button" class="icon-btn" data-modal-close aria-label="بستن"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="receipt-modal-body">
+      <div class="receipt-modal-frame">
+        <img id="receipt-modal-img" class="receipt-modal-img" alt="رسید پرداخت" />
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const modal = document.getElementById('modal-receipt');
+  const img = document.getElementById('receipt-modal-img');
+  if (!modal || !img) return;
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-receipt-open]');
+    if (!btn) return;
+    e.preventDefault();
+    const url = btn.getAttribute('data-receipt-open');
+    if (!url) return;
+    img.removeAttribute('src');
+    img.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now();
+    if (window.openModal) window.openModal('modal-receipt');
+    else {
+      modal.hidden = false;
+      modal.classList.add('open');
+    }
+  });
+  modal.addEventListener('click', function (e) {
+    if (e.target === modal.querySelector('.ui-modal-backdrop')) {
+      img.removeAttribute('src');
+    }
+  });
+  const closer = modal.querySelector('[data-modal-close].icon-btn');
+  if (closer) {
+    closer.addEventListener('click', function () {
+      img.removeAttribute('src');
+    });
+  }
+})();
+</script>
+{% endblock %}

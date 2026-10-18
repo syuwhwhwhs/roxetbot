@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_title %}
+{% block title %}رفتار کاربر{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    {{ page_title('orders', 'رفتار کاربر', 'neutral', help='funnel') }}
+  </div>
+  <a class="btn btn-ghost btn-sm" href="/finance?tab=behavior">مدیریت مالی</a>
+</div>
+
+{% include "_funnel_panel.html" %}
+{% endblock %}

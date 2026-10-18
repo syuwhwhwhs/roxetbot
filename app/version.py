@@ -1,0 +1,17 @@
+"""App version — bump when releasing so the panel can detect updates."""
+
+import os
+
+__version__ = "0.3.17"
+
+# GitHub repo used for update checks (override with ROXET_GITHUB_REPO=owner/repo)
+GITHUB_REPO = (os.environ.get("ROXET_GITHUB_REPO") or "").strip() or "Mrclocks/PGClockBot"
+# Defaults point at main (stable). Channel-aware callers use
+# ``app.services.update_channel.github_version_url`` / ``github_release_notes_url``.
+GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
+GITHUB_RELEASE_NOTES_URL = (
+    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/app/services/release_notes.py"
+)
+GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
+GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+GITHUB_TAGS_API = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
